@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <title>真实撕拉交互 - 修复版</title>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
+    <style>
+        body { margin: 0; background: #000; overflow: hidden; }
+        canvas { display: block; }
+    </style>
+</head>
+<body>
+<video id="v" style="display:none" autoplay playsinline></video>
+<canvas id="c"></canvas>
+
+<script>
+const { Engine, World, Bodies, Constraint, Composite } = Matter;
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+// 初始化物理世界
+const engine = Engine.create();
+const cloth = Composite.create();
+const rows = 8, cols = 8;
+for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+        let b = Bodies.circle(c * 50 + 300, r * 50 + 150, 5, { isStatic: false });
+        Composite.add(cloth, b);
+        if (c > 0) Composite.add(cloth, Constraint.create({ bodyA: cloth.bodies[cloth.bodies.length - 2], bodyB: b, stiffness: 0.1 }));
+        if (r > 0) Composite.add(cloth, Constraint.create({ bodyA: cloth.bodies[cloth.bodies.length - cols], bodyB: b, stiffness: 0.1 }));
+    }
+}
+World.add(engine.world, cloth);
+
+function render() {
+    Engine.update(engine, 1000/60);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.strokeStyle = '#0ff';
+    cloth.constraints.forEach(c => {
+        ctx.beginPath();
+        ctx.moveTo(c.bodyA.position.x, c.bodyA.position.y);
+        ctx.lineTo(c.bodyB.position.x, c.bodyB.position.y);
+        ctx.stroke();
+    });
+    requestAnimationFrame(render);
+}
+render();
+
+// 使用 CDN 路径彻底解决模型加载错误
+// 1. 彻底替换原来的 hands 初始化
+const hands = new Hands({
+    locateFile: (file) => {
+        return `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`;
+    }
+});
+
+// 2. 核心优化：确保模型加载器明确指向 CDN
+// 将原来的 hands.setOptions 修改为：
+hands.setOptions({
+    maxNumHands: 1,
+    modelComplexity: 1,
+    minDetectionConfidence: 0.5,
+    minTrackingConfidence: 0.5
+});
+hands.onResults(res => {
+    if(res.multiHandLandmarks?.[0]) {
+        let f = res.multiHandLandmarks[0][8];
+        let x = (1 - f.x) * canvas.width, y = f.y * canvas.height;
+        cloth.bodies.forEach(b => {
+            if (Math.hypot(b.position.x - x, b.position.y - y) < 60) {
+                Matter.Body.setPosition(b, { x, y });
+            }
+        });
+    }
+});
+
+const camera = new Camera(document.getElementById('v'), { 
+    onFrame: async () => await hands.send({image: document.getElementById('v')}),
+    width: 640, height: 480 
+});
+camera.start();
+// 添加一个强制渲染检测器
+function debugRender() {
+    console.log("正在尝试绘制...");
+    ctx.fillStyle = 'red';
+    ctx.fillRect(50, 50, 100, 100); // 在左上角画一个红色方块
+    
+    // 检查布料点阵坐标是否有数据
+    if (cloth.bodies.length > 0) {
+        console.log("布料节点数:", cloth.bodies.length);
+        console.log("第一个节点坐标:", cloth.bodies[0].position);
+    }
+    requestAnimationFrame(debugRender);
+}
+debugRender();
+</script>
+</body>
+</html>
